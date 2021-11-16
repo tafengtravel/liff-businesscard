@@ -1,0 +1,236 @@
+extends /layout/default
+
+block beforehtml
+  -
+    title = '分享 LINE 數位版名片'
+    description = '請開啟本連結並按一下「分享好友」來分享給好友或群組。'
+
+block style
+  meta(property="og:image:height", content="630")
+  meta(property="og:image:width", content="1200")
+  meta(property="og:image", content="https://i.imgur.com/1KZoSue.png")
+  meta(property="og:url", content=`https://liff.line.me/${liffidFull}/share.html`)
+  link(rel="stylesheet", href="https://cdn.jsdelivr.net/gh/PamornT/flex2html@main/css/flex2html.css")
+  style
+    :sass
+      [v-cloak]
+        display: none
+
+block content
+  #app.container.my-4.text-monospace(v-cloak)
+    h3.my-3.text-center {{ $t('title') }}
+    .form-group.my-3
+      button.btn.btn-lg.btn-success.btn-block.my-2.d-flex.justify-content-center.align-items-center(type="button", @click="btnShare", :disabled="!msgs") #[i.fa.mr-2.fa-share-square-o] {{ $t('share.btn') }}
+      small.form-text.text-muted {{ $t('share.help') }}
+    .form-group.my-3
+      button.btn.btn-lg.btn-info.btn-block.my-2.d-flex.justify-content-center.align-items-center(type="button", @click="btnSend", :disabled="!msgs") #[i.fa.mr-2.fa-paper-plane-o] {{ $t('send.btn') }}
+      small.form-text.text-muted {{ $t('send.help') }}
+    .form-group.my-3
+      button.btn.btn-lg.btn-outline-secondary.btn-block.my-2.d-flex.justify-content-center.align-items-center(type="button", @click="btnCopy(liffLink)") #[i.fa.mr-2.fa-clipboard] {{ $t('copy.btn') }}
+      small.form-text.text-muted {{ $t('copy.help') }}
+    .dropdown.my-3
+      button.btn.btn-lg.btn-secondary.btn-block.dropdown-toggle(type="button", data-toggle="dropdown") {{ $t('dropdown.btn') }}
+      .dropdown-menu
+        a.dropdown-item(target="_blank", href="https://line.me/R/nv/QRCodeReader") #[i.fa.fa-fw.fa-qrcode] {{ $t('dropdown.qrcodeReader') }}
+        a.dropdown-item(target="_blank", href="https://line.me/R/nv/addFriends") #[i.fa.fa-fw.fa-users] {{ $t('dropdown.addFriends') }}
+        a.dropdown-item(target="_blank", href="https://line.me/R/nv/keep") #[i.fa.fa-fw.fa-bookmark] {{ $t('dropdown.keep') }}
+        a.dropdown-item(target="_blank", href=baseurl+'?openExternalBrowser=1') #[i.fa.fa-fw.fa-address-card] {{ $t('dropdown.create') }}
+        a.dropdown-item(target="_blank", href="https://fb.me/taichunmin?openExternalBrowser=1") #[i.fa.fa-fw.fa-facebook-official] {{ $t('dropdown.author') }}
+        button.dropdown-item(type="button", @click="btnFriendMissing") #[i.fa.fa-fw.fa-question-circle] {{ $t('dropdown.friendMissing') }}
+    .table-responsive(style="background-color: #849ebf")
+      .chatbox.pt-3
+        #flex2html(ref="flex2html")
+
+block script
+  script(crossorigin="anonymous", src="https://static.line-scdn.net/liff/edge/2/sdk.js")
+  script(crossorigin="anonymous", src="https://cdn.jsdelivr.net/gh/PamornT/flex2html@main/js/flex2html.min.js")
+  script.
+    const loginPromise = (async () => {
+      await liff.init({ liffId: '#{liffidFull}' })
+      if (window.getSearchParam('liff.state')) await new Promise(resolve => {}) // 永遠不會結束的 Promise
+      if (!liff.isLoggedIn()) {
+        liff.login({ redirectUri: location.href })
+        await new Promise(resolve => {}) // 永遠不會結束的 Promise
+      }
+      let profile = {}
+      try {
+        profile = await liff.getProfile()
+      } catch (err) {
+        window.logError({ err })
+      }
+      window.gtagInit(profile.userId)
+      return profile
+    })()
+    window.vueConfig = {
+      el: '#app',
+      data: {
+        liffLink: null,
+        msgs: null,
+        render: null,
+        vcard: null,
+      },
+      async mounted () {
+        try {
+          this.showLoading(this.$t('wait'), this.$t('init.loading'))
+          await loginPromise
+          window.gtagScreenView('瀏覽分享名片網頁')
+          window.gtagTiming('after loginPromise')
+          this.liffLink = liff.permanentLink.createUrl()
+          await Promise.all([
+            this.getTpl(),
+            this.getVcard(),
+          ])
+          this.msgs = this.getRenderedMsgs()
+          console.log(this.msgs)
+          for (const msg of this.msgs) {
+            window.flex2html('flex2html', msg)
+          }
+          this.hideLoading()
+          window.gtagTiming('after mounted')
+          await this.showSavedAlert()
+        } catch (err) {
+          window.logError({ err, fatal: true })
+          await Swal.fire({ icon: 'error', title: this.$t('init.fail'), text: err.message })
+        }
+      },
+      computed: {
+        locale: {
+          get () { return this.$i18n.locale },
+          set (newVal) { this.$i18n.locale = newVal },
+        },
+      },
+      methods: {
+        async getTpl () {
+          try {
+            const tpl = this.paramBase64url('template')
+            if (!tpl) throw new Error('template is required.')
+            const render = _.template(_.get(await axios.get(tpl, {
+              params: { cachebust: Date.now() },
+              transformResponse: [],
+            }), 'data'))
+            if (!_.isFunction(render)) throw new Error('')
+            this.render = options => render({ _, dayjs, Qs, liffLink: this.liffLink, ...options })
+            window.gtagTiming('after getTpl')
+          } catch (err) {
+            err.message = `${this.$t('init.getTplFail')}${err.message ? ': ' + err.message : ''}`
+            this.render = null
+            throw err
+          }
+        },
+        async getVcard () {
+          this.vcard = _.mapValues(_.omit(_.fromPairs([...new URL(location).searchParams]), [
+            'code',
+            'liffClientId',
+            'liffRedirectUri',
+            'state',
+            'template',
+          ]), window.decodeBase64url)
+          window.gtagTiming('after getVcard')
+        },
+        async btnShare () {
+          try {
+            this.showLoading(this.$t('wait'), this.$t('share.loading'))
+            window.gtagEvent('瀏覽分享名片網頁', 'btnShare', this.vcard.template)
+            if (!liff.isApiAvailable('shareTargetPicker')) throw new Error(this.$t('share.unsupported'))
+            const beforeShare = Date.now()
+            const res = await liff.shareTargetPicker(this.msgs)
+            if (_.get(res, 'status') !== 'success') throw new Error(this.$t('share.canceled'))
+            const afterShare = Date.now()
+            await Swal.fire({ icon: 'success', title: this.$t('share.success') })
+            if (afterShare - beforeShare > 1e3) liff.closeWindow()
+          } catch (err) {
+            window.logError({ err })
+            await Swal.fire({ icon: 'error', title: this.$t('share.fail'), text: err.message })
+          }
+        },
+        async btnSend () {
+          try {
+            this.showLoading(this.$t('wait'), this.$t('send.loading'))
+            window.gtagEvent('瀏覽分享名片網頁', 'btnSend', this.vcard.template)
+            if (!this.canSendMessages()) throw new Error(this.$t('send.unsupported'))
+            await liff.sendMessages(this.msgs)
+            await Swal.fire({ icon: 'success', title: this.$t('send.success') })
+            liff.closeWindow()
+          } catch (err) {
+            window.logError({ err })
+            await Swal.fire({ icon: 'error', title: this.$t('send.fail'), text: err.message })
+          }
+        },
+        async btnCopy (text, container = null) {
+          window.gtagEvent('瀏覽分享名片網頁', 'btnCopy', this.vcard.template)
+          if (!container) container = document.body
+          const dom = document.createElement('textarea')
+          dom.value = text
+          container.appendChild(dom)
+          dom.select()
+          dom.setSelectionRange(0, 1e6) // For mobile devices
+          document.execCommand('copy')
+          container.removeChild(dom)
+          await Swal.fire({ icon: 'success', title: this.$t('copy.success') })
+        },
+        async showSavedAlert () {
+          const swalFire = window.parseJsonOrDefault(localStorage.getItem('swalFire'))
+          localStorage.removeItem('swalFire')
+          if (_.isNil(swalFire)) return
+          await Swal.fire(swalFire)
+        },
+        async btnFriendMissing () {
+          await Swal.fire({
+            padding: '0',
+            customClass: { actions: 'mt-0 mb-2', content: 'pt-3 px-3' },
+            html: this.$t('dropdown.friendMissingHtml'),
+          })
+        },
+        getRenderedMsgs () {
+          let msg = this.render({ vcard: this.vcard })
+          console.log(msg)
+          msg = JSON5.parse(msg)
+          if (_.includes(['bubble', 'carousel'], _.get(msg, 'type'))) {
+            msg = { type: 'flex', altText: this.$t('flexAltText'), contents: msg }
+          }
+          msg = _.castArray(msg)
+          return msg
+        },
+        canSendMessages () {
+          if (!liff.isInClient()) return false
+          const contextType = _.get(liff.getContext(), 'type')
+          if (!_.includes(['utou', 'room', 'group', 'square_chat'], contextType)) return false
+          return true
+        },
+        paramBase64url (key) {
+          const base64 = window.getSearchParam(key)
+          return base64 ? window.decodeBase64url(base64) : null
+        },
+        paramGzip (key) {
+          const base64 = window.getSearchParam(key)
+          return base64 ? window.decodeGzip(base64) : null
+        },
+        showLoading (title, text) {
+          Swal.fire({
+            title,
+            text,
+            allowOutsideClick: false,
+            showConfirmButton: false,
+            willOpen: () => { Swal.showLoading() },
+          })
+        },
+        hideLoading () {
+          Swal.close()
+        },
+      },
+    }
+  // vue-i18n
+  include /i18n/liff-full/share.en.pug
+  include /i18n/liff-full/share.zh-tw.pug
+  //- 給予修改 vueConfig 的機會
+  block vue-config
+  script.
+    (async () => {
+      if (_.isFunction(window.beforeVueCreate)) await window.beforeVueCreate()
+      window.vueConfig.i18n = new VueI18n({ // vue-i18n
+        locale: navigator.language,
+        fallbackLocale: 'zh-TW',
+        messages: (window.i18nMessages || {}),
+      })
+      window.vm = new Vue(window.vueConfig)
+    })()

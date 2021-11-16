@@ -1,0 +1,59 @@
+if GA_MEASUREMENT_ID
+  script(async, src=`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`)
+  script.
+    window.dataLayer = window.dataLayer || []
+    window.GA_MEASUREMENT_ID = '#{GA_MEASUREMENT_ID}'
+    function gtag () { window.dataLayer.push(arguments) }
+    gtag('js', new Date())
+    gtag('config', 'UA-39556213-3')
+    window.gtagInit = lineId => {
+      const config = {
+        app_name: 'LINE 數位版名片網站',
+        groups: 'liff',
+        send_page_view: false,
+        transport_type: 'beacon',
+      }
+      if (window.liff) { // 如果是在 LIFF 內
+        config.app_name = `LIFF ${liff.getOS()} ${liff.getVersion()}`
+        if (/^U[0-9a-f]{32}$/.test(lineId)) config.user_id = lineId
+        if (liff.isInClient()) config.app_version = liff.getLineVersion()
+      }
+      gtag('config', window.GA_MEASUREMENT_ID, config)
+    }
+    window.gtagEvent = (category, action, label, value = 1) => new Promise(resolve => {
+      gtag('event', action, {
+        event_callback: resolve,
+        event_category: category,
+        event_label: label,
+        send_to: 'liff',
+        value,
+      })
+    })
+    window.gtagScreenView = screenName => new Promise(resolve => {
+      gtag('event', 'screen_view', {
+        event_callback: resolve,
+        screen_name: screenName,
+        send_to: 'liff',
+      })
+    })
+    window.gtagError = (err, fatal = false) => new Promise(resolve => {
+      gtag('event', 'exception', {
+        description: err.message || '',
+        event_callback: resolve,
+        fatal,
+        send_to: 'liff',
+      })
+    })
+    window.gtagTiming = async name => {
+      if (!window.performance) return
+      const timeSincePageLoad = Math.round(performance.now())
+      await new Promise(resolve => {
+        gtag('event', 'timing_complete', {
+          event_callback: resolve,
+          event_category: location.pathname,
+          name,
+          send_to: 'liff',
+          value: timeSincePageLoad,
+        })
+      })
+    }
